@@ -1,4 +1,6 @@
 .env
+ __pycache__/
 token.pickle
 client_secret.json
 .DS_Store
+*.log

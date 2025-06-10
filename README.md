@@ -79,6 +79,21 @@ The first time you run the script, a browser window will open, prompting you to 
 4. Monitoring:
 The bot will then start searching for your active live streams. Once a live stream is found, it will begin monitoring its chat, sending new messages to your local LM Studio instance for moderation, and deleting inappropriate ones.
 
+## Training LLM context
+
+I wrote some simple script to try increase quality of the context used for comment classification.
+This gave me local increase in acuracy from 45% to 76%
+
+To run it:
+```bash
+python3 train_moderator.py --history train_comments.txt --preds res.log --input test_comments.log
+```
+
+It use train_comments.txt as your train data to verify context prediction with it, this in some way gives
+LLM understanding of what can be changed.
+
+That not the best way how to do it of course. But still it works)
+
 ## Troubleshooting
 
 * **client_secret.json not found:** Ensure the file is in the same directory as your script.
