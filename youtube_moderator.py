@@ -34,6 +34,8 @@ KEEP – for all other messages, including:
 
 Important Guidelines:
 * When in Doubt, DELETE. Prioritize user safety and a positive community experience.
+
+Respond only with KEEP or DELETE and nothing else.
 """
 POLL_INTERVAL_SECONDS = 10  # How often to check for new messages (in seconds)
 REQUIRED_SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]  # Required for deleting messages
@@ -151,7 +153,7 @@ def moderate_message_with_llm(message_text):
         print(f"🤖 LLM ({LLM_MODEL_NAME}) decided: '{decision}' for message: '{message_text}'")
         if decision not in ["DELETE", "KEEP"]:
             print(f"⚠️ Unexpected response from LLM: '{decision}'. Defaulting to 'KEEP'.")
-            return "KEEP"
+            return "DELETE"
         return decision
     except requests.exceptions.RequestException as e:
         print(f"Connection error with LM Studio API: {e}")
@@ -216,8 +218,14 @@ def main():
                     if message_id not in processed_message_ids:
                         new_messages_count += 1
                         processed_message_ids.add(message_id)
-                        author_name = item['authorDetails']['displayName']
-                        message_text = item['snippet']['displayMessage']
+                        author_name = ""
+                        message_text = ""
+                        try:
+                            author_name = item['authorDetails']['displayName']
+                            message_text = item['snippet']['displayMessage']
+                        except:
+                            print("Error getting message: ",item)
+                            continue
                         print(f"\n💬 New message from {author_name}: {message_text}")
 
                         moderation_decision = moderate_message_with_llm(message_text)

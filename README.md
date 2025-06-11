@@ -86,7 +86,7 @@ This gave me local increase in acuracy from 45% to 76%
 
 To run it:
 ```bash
-python3 train_moderator.py --history train_comments.txt --preds res.log --input test_comments.log
+python3 train_moderator.py --history train_comments.txt --preds res.log --input test_comments.txt
 ```
 
 It use train_comments.txt as your train data to verify context prediction with it, this in some way gives
