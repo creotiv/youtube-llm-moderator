@@ -7,8 +7,8 @@ from test_moderator import test
 from verify_moderator import verify
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
-LMSTUDIO_API_URL = 'http://localhost:1234/v1/chat/completions'
-LLM_MODEL_NAME    = 'google/gemma-3-12b'
+LMSTUDIO_API_URL = "http://localhost:1234/v1/chat/completions"
+LLM_MODEL_NAME = "google/gemma-3-12b"
 TEMPERATURE = 0.1
 MAX_LENGTH = 900
 BASE_LLM_SYSTEM_PROMPT = """
@@ -42,6 +42,7 @@ Return only new context with max lenghth of {MAX_LENGTH} symbols and nothing mor
 Try to minimize new context, less symbols usually gives better result.
 """.strip()
 
+
 # ─── UPDATE CALL ─────────────────────────────────────────────────────────
 def update_llm(context, stats) -> str:
     message = f"""
@@ -55,13 +56,14 @@ def update_llm(context, stats) -> str:
         "model": LLM_MODEL_NAME,
         "messages": [
             {"role": "system", "content": LLM_TRAIN_PROMPT},
-            {"role": "user",   "content": message},
+            {"role": "user", "content": message},
         ],
         "temperature": TEMPERATURE,
     }
     resp = requests.post(LMSTUDIO_API_URL, json=payload, timeout=300)
     resp.raise_for_status()
-    return resp.json()['choices'][0]['message']['content'].strip()
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
 
 # ─── MAIN / CLI ───────────────────────────────────────────────────────────────
 def train(input, history, preds):
@@ -74,31 +76,39 @@ def train(input, history, preds):
         test(input, preds, context)
         res = verify(history, preds)
         print(f"it={iteration} stats={res}")
-        if best_acc < res['accuracy']:
+        break
+        if best_acc < res["accuracy"]:
             context = new_context
-            best_acc = res['accuracy']
+            best_acc = res["accuracy"]
             open("best_context.txt", "w").write(context)
         new_context = update_llm(context, res)
         print("New context ==============================")
         print(new_context)
         iteration += 1
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Trian your YouTube chat moderator context on a local file of comments."
     )
     parser.add_argument(
-        "--input", required=True,
-        help="Path to a text file with one comment per line."
+        "--input", required=True, help="Path to a text file with one comment per line."
     )
-    parser.add_argument("--history", required=True,
-                        help="Path to history file with 'FAIL','LABEL', for message: '…'")
-    parser.add_argument("--preds", required=True,
-                        help="Path to new predictions file (output of test script).")
+    parser.add_argument(
+        "--history",
+        required=True,
+        help="Path to history file with 'FAIL','LABEL', for message: '…'",
+    )
+    parser.add_argument(
+        "--preds",
+        required=True,
+        help="Path to new predictions file (output of test script).",
+    )
 
     args = parser.parse_args()
 
     train(args.input, args.history, args.preds)
+
 
 if __name__ == "__main__":
     main()

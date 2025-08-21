@@ -5,10 +5,10 @@ import sys
 import csv
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
-LMSTUDIO_API_URL = 'http://localhost:1234/v1/chat/completions'
-LLM_MODEL_NAME    = 'google/gemma-3-12b'
+LMSTUDIO_API_URL = "http://localhost:1234/v1/chat/completions"
+LLM_MODEL_NAME = 'google/gemma-3-12b'
 seed = "223423423"
-#mistralai/mistral-7b-instruct-v0.3
+# mistralai/mistral-7b-instruct-v0.3
 
 # LLM_SYSTEM_PROMPT = """
 # Ты — модератор чата YouTube. Твоя задача — анализировать пользовательские комментарии.
@@ -127,6 +127,7 @@ Respond only with KEEP or DELETE and nothing else.
 # Respond with only the word: KEEP or DELETE.
 # """.strip()
 
+
 # ─── MODERATION CALL ─────────────────────────────────────────────────────────
 def moderate_message_with_llm(message_text: str) -> str:
     if not message_text.strip():
@@ -135,22 +136,23 @@ def moderate_message_with_llm(message_text: str) -> str:
         "model": LLM_MODEL_NAME,
         "messages": [
             {"role": "system", "content": LLM_SYSTEM_PROMPT},
-            {"role": "user",   "content": message_text},
+            {"role": "user", "content": message_text},
         ],
         "temperature": 0.1,
-        "max_tokens": 10
+        "max_tokens": 10,
     }
     try:
         resp = requests.post(LMSTUDIO_API_URL, json=payload, timeout=30)
         resp.raise_for_status()
-        choice = resp.json()['choices'][0]['message']['content'].strip().upper()
-        if choice in ("DELETE","KEEP"):
+        choice = resp.json()["choices"][0]["message"]["content"].strip().upper()
+        if choice in ("DELETE", "KEEP"):
             return choice
         else:
             return "KEEP"
     except Exception as e:
-        print(f"[ERROR] LLM request failed for \"{message_text}\": {e}", file=sys.stderr)
+        print(f'[ERROR] LLM request failed for "{message_text}": {e}', file=sys.stderr)
         return "KEEP"
+
 
 # ─── MAIN / CLI ───────────────────────────────────────────────────────────────
 def test(input, preds, context=None):
@@ -160,9 +162,9 @@ def test(input, preds, context=None):
         LLM_SYSTEM_PROMPT = context
 
     try:
-        csvfile = open(preds, 'w', newline='')
-        spamwriter = csv.writer(csvfile, delimiter=',', quotechar="'")
-        with open(input, encoding='utf-8') as f:
+        csvfile = open(preds, "w", newline="")
+        spamwriter = csv.writer(csvfile, delimiter=",", quotechar="'")
+        with open(input, encoding="utf-8") as f:
             for raw in f:
                 comment = raw.rstrip("\n")
                 if not comment:
@@ -174,19 +176,26 @@ def test(input, preds, context=None):
         print(f"[ERROR] File not found: {input}", file=sys.stderr)
         sys.exit(1)
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Test your YouTube chat moderator context on a local file of comments."
     )
     parser.add_argument(
-        "--input", "-i", required=True,
-        help="Path to a text file with one comment per line."
+        "--input",
+        "-i",
+        required=True,
+        help="Path to a text file with one comment per line.",
     )
-    parser.add_argument("--preds", required=True,
-                        help="Path to new predictions file (output of test script).")
+    parser.add_argument(
+        "--preds",
+        required=True,
+        help="Path to new predictions file (output of test script).",
+    )
     args = parser.parse_args()
 
     test(args.input, args.preds)
+
 
 if __name__ == "__main__":
     main()

@@ -9,11 +9,13 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # --- CONFIGURATIONS ---
-CLIENT_SECRET_FILE = 'client_secret.json'  # Path to your client_secret.json
-LMSTUDIO_API_URL = 'http://localhost:1234/v1/chat/completions'  # URL of your LM Studio server
+CLIENT_SECRET_FILE = "client_secret.json"  # Path to your client_secret.json
+LMSTUDIO_API_URL = (
+    "http://localhost:1234/v1/chat/completions"  # URL of your LM Studio server
+)
 # Replace 'your-loaded-model-identifier' with the identifier of the model you have loaded and running in LM Studio
 # For example: 'lmstudio-community/Phi-3-mini-4k-instruct-GGUF/Phi-3-mini-4k-instruct-Q4_K_M.gguf'
-LLM_MODEL_NAME = 'google/gemma-3-12b'
+LLM_MODEL_NAME = "google/gemma-3-12b"
 # System prompt for LLM. Customize it for better detection of "bad" comments.
 LLM_SYSTEM_PROMPT = """
 You are an AI YouTube chat moderator for a Ukrainian/Russian language channel. Your primary goal is to maintain a respectful and engaging live chat environment while minimizing censorship of legitimate discussion. Focus on identifying content that actively harms the community, not policing opinions.
@@ -38,8 +40,14 @@ Important Guidelines:
 Respond only with KEEP or DELETE and nothing else.
 """
 POLL_INTERVAL_SECONDS = 10  # How often to check for new messages (in seconds)
-REQUIRED_SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]  # Required for deleting messages
-TOKEN_PICKLE_FILE = 'token.pickle'  # File for saving authorization tokens
+REQUIRED_SCOPES = [
+    "https://www.googleapis.com/auth/youtube.force-ssl"
+]  # Required for deleting messages
+TOKEN_PICKLE_FILE = "token.pickle"  # File for saving authorization tokens
+# Advertising / promo message configuration
+AD_MESSAGE_INTERVAL_SECONDS = 180  # Post promo message once every 3 minutes
+AD_MESSAGE_TEXT = """Друзья! Поддержите канал: подписка, лайк и колокольчик помогут развитию ❤️
+Так же поддержите спасение животных: https://uah.fund/donate"""
 
 # Variable to store IDs of already processed messages to avoid re-checking them
 processed_message_ids = set()
@@ -50,19 +58,21 @@ def authenticate_youtube():
     """Authenticate via OAuth 2.0 and get the YouTube API service."""
     creds = None
     if os.path.exists(TOKEN_PICKLE_FILE):
-        with open(TOKEN_PICKLE_FILE, 'rb') as token:
+        with open(TOKEN_PICKLE_FILE, "rb") as token:
             creds = pickle.load(token)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, REQUIRED_SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(
+                CLIENT_SECRET_FILE, REQUIRED_SCOPES
+            )
             creds = flow.run_local_server(port=0)
-        with open(TOKEN_PICKLE_FILE, 'wb') as token:
+        with open(TOKEN_PICKLE_FILE, "wb") as token:
             pickle.dump(creds, token)
 
-    return build('youtube', 'v3', credentials=creds)
+    return build("youtube", "v3", credentials=creds)
 
 
 def get_active_live_chat_id(youtube):
@@ -71,20 +81,20 @@ def get_active_live_chat_id(youtube):
         print("🔍 Searching for user broadcasts...")
         request = youtube.liveBroadcasts().list(
             part="snippet,contentDetails,status",
-            mine=True  # Request all user broadcasts
+            mine=True,  # Request all user broadcasts
         )
         response = request.execute()
 
-        if not response.get('items'):
+        if not response.get("items"):
             print("😕 No user broadcasts found.")
             return None
 
         active_broadcast = None
-        for broadcast_item in response.get('items', []):
+        for broadcast_item in response.get("items", []):
             # Check broadcast status to find the active one
             # 'live' status means the broadcast is currently live
             # Can also check broadcast_item['status']['recordingStatus'] == 'recording'
-            if broadcast_item.get('status', {}).get('lifeCycleStatus') == 'live':
+            if broadcast_item.get("status", {}).get("lifeCycleStatus") == "live":
                 active_broadcast = broadcast_item
                 break  # Found an active broadcast
 
@@ -92,9 +102,11 @@ def get_active_live_chat_id(youtube):
             print("😕 No active streams found among user broadcasts.")
             return None
 
-        live_chat_id = active_broadcast['snippet']['liveChatId']
-        stream_title = active_broadcast['snippet']['title']
-        print(f"🟢 Active stream found: '{stream_title}' (Live Chat ID: {live_chat_id})")
+        live_chat_id = active_broadcast["snippet"]["liveChatId"]
+        stream_title = active_broadcast["snippet"]["title"]
+        print(
+            f"🟢 Active stream found: '{stream_title}' (Live Chat ID: {live_chat_id})"
+        )
         return live_chat_id
     except HttpError as e:
         print(f"YouTube API error while searching for active stream: {e}")
@@ -116,12 +128,12 @@ def get_live_chat_messages(youtube, live_chat_id, page_token=None):
             liveChatId=live_chat_id,
             part="snippet,authorDetails,id",
             maxResults=200,  # Maximum number of messages per request
-            pageToken=page_token
+            pageToken=page_token,
         )
         response = request.execute()
         return response
     except HttpError as e:
-        if e.resp.status == 403 and 'disabled' in str(e).lower():
+        if e.resp.status == 403 and "disabled" in str(e).lower():
             print(f"🔴 Error: Chat for this stream is disabled or unavailable. ({e})")
             return None
         print(f"YouTube API error while retrieving messages: {e}")
@@ -140,19 +152,25 @@ def moderate_message_with_llm(message_text):
         "model": LLM_MODEL_NAME,
         "messages": [
             {"role": "system", "content": LLM_SYSTEM_PROMPT},
-            {"role": "user", "content": message_text}
+            {"role": "user", "content": message_text},
         ],
         "temperature": 0.1,  # Low temperature for more deterministic responses
-        "max_tokens": 10  # "DELETE" or "KEEP" - short responses
+        "max_tokens": 10,  # "DELETE" or "KEEP" - short responses
     }
     try:
-        response = requests.post(LMSTUDIO_API_URL, json=payload, timeout=30)  # timeout 30 seconds
+        response = requests.post(
+            LMSTUDIO_API_URL, json=payload, timeout=30
+        )  # timeout 30 seconds
         response.raise_for_status()  # Check for HTTP errors
         llm_response = response.json()
-        decision = llm_response['choices'][0]['message']['content'].strip().upper()
-        print(f"🤖 LLM ({LLM_MODEL_NAME}) decided: '{decision}' for message: '{message_text}'")
+        decision = llm_response["choices"][0]["message"]["content"].strip().upper()
+        print(
+            f"🤖 LLM ({LLM_MODEL_NAME}) decided: '{decision}' for message: '{message_text}'"
+        )
         if decision not in ["DELETE", "KEEP"]:
-            print(f"⚠️ Unexpected response from LLM: '{decision}'. Defaulting to 'KEEP'.")
+            print(
+                f"⚠️ Unexpected response from LLM: '{decision}'. Defaulting to 'KEEP'."
+            )
             return "DELETE"
         return decision
     except requests.exceptions.RequestException as e:
@@ -177,14 +195,35 @@ def delete_chat_message(youtube, message_id):
         print(f"Unknown error when deleting message {message_id}: {e}")
 
 
+def post_advertising_message(youtube, live_chat_id, message_text=AD_MESSAGE_TEXT):
+    """Posts an advertising/promo message to the live chat."""
+    try:
+        body = {
+            "snippet": {
+                "liveChatId": live_chat_id,
+                "type": "textMessageEvent",
+                "textMessageDetails": {"messageText": message_text},
+            }
+        }
+        youtube.liveChatMessages().insert(part="snippet", body=body).execute()
+        print("📣 Posted promotional message to chat.")
+    except HttpError as e:
+        print(f"YouTube API error when posting promo message: {e}")
+    except Exception as e:
+        print(f"Unknown error when posting promo message: {e}")
+
+
 def main():
     """Main function of the script."""
     global processed_message_ids
     global last_poll_time
+    last_ad_post_time = None
 
     print("🚀 Starting YouTube Chat Moderator Bot...")
-    if LLM_MODEL_NAME == 'your-loaded-model-identifier':
-        print("🚨 IMPORTANT: Please set the correct `LLM_MODEL_NAME` in the script configurations!")
+    if LLM_MODEL_NAME == "your-loaded-model-identifier":
+        print(
+            "🚨 IMPORTANT: Please set the correct `LLM_MODEL_NAME` in the script configurations!"
+        )
         return
 
     youtube = authenticate_youtube()
@@ -200,31 +239,36 @@ def main():
             if not live_chat_id:
                 live_chat_id = get_active_live_chat_id(youtube)
                 if not live_chat_id:
-                    print(f"No active streams found. Retrying in {POLL_INTERVAL_SECONDS * 5} seconds...")
+                    print(
+                        f"No active streams found. Retrying in {POLL_INTERVAL_SECONDS * 5} seconds..."
+                    )
                     time.sleep(POLL_INTERVAL_SECONDS * 5)
                     continue
                 else:
                     # Reset processed messages and page token for a new stream/chat
                     processed_message_ids = set()
                     next_page_token = None
+                    last_ad_post_time = time.time()  # start interval for promo posting
                     print(f"🎧 Starting to monitor chat ID: {live_chat_id}")
 
-            chat_response = get_live_chat_messages(youtube, live_chat_id, page_token=next_page_token)
+            chat_response = get_live_chat_messages(
+                youtube, live_chat_id, page_token=next_page_token
+            )
 
             if chat_response:
                 new_messages_count = 0
-                for item in chat_response.get('items', []):
-                    message_id = item['id']
+                for item in chat_response.get("items", []):
+                    message_id = item["id"]
                     if message_id not in processed_message_ids:
                         new_messages_count += 1
                         processed_message_ids.add(message_id)
                         author_name = ""
                         message_text = ""
                         try:
-                            author_name = item['authorDetails']['displayName']
-                            message_text = item['snippet']['displayMessage']
+                            author_name = item["authorDetails"]["displayName"]
+                            message_text = item["snippet"]["displayMessage"]
                         except:
-                            print("Error getting message: ",item)
+                            print("Error getting message: ", item)
                             continue
                         print(f"\n💬 New message from {author_name}: {message_text}")
 
@@ -239,18 +283,41 @@ def main():
                 if new_messages_count == 0:
                     print(f".", end="", flush=True)
 
-                next_page_token = chat_response.get('nextPageToken')
+                # Post promo message on schedule
+                current_time = time.time()
+                if (
+                    live_chat_id
+                    and last_ad_post_time is not None
+                    and (current_time - last_ad_post_time)
+                    >= AD_MESSAGE_INTERVAL_SECONDS
+                ):
+                    post_advertising_message(youtube, live_chat_id)
+                    last_ad_post_time = current_time
+
+                next_page_token = chat_response.get("nextPageToken")
                 # Use pollingIntervalMillis if available, or our default
-                poll_interval = chat_response.get('pollingIntervalMillis', POLL_INTERVAL_SECONDS * 1000) / 1000.0
+                poll_interval = (
+                    chat_response.get(
+                        "pollingIntervalMillis", POLL_INTERVAL_SECONDS * 1000
+                    )
+                    / 1000.0
+                )
                 # Add a small buffer and limit the minimum interval
                 actual_poll_interval = max(POLL_INTERVAL_SECONDS, poll_interval + 2)
                 time.sleep(actual_poll_interval)
-            elif chat_response is None and live_chat_id:  # Likely chat is disabled or stream ended
-                print(f"⚠️ Failed to get messages from chat {live_chat_id}. Perhaps the stream has ended or chat is disabled.")
-                print(f"🔁 Trying to find a new active stream in {POLL_INTERVAL_SECONDS * 3} seconds.")
+            elif (
+                chat_response is None and live_chat_id
+            ):  # Likely chat is disabled or stream ended
+                print(
+                    f"⚠️ Failed to get messages from chat {live_chat_id}. Perhaps the stream has ended or chat is disabled."
+                )
+                print(
+                    f"🔁 Trying to find a new active stream in {POLL_INTERVAL_SECONDS * 3} seconds."
+                )
                 live_chat_id = None  # Reset ID so the script tries to find a new stream
                 next_page_token = None
                 processed_message_ids = set()
+                last_ad_post_time = None
                 time.sleep(POLL_INTERVAL_SECONDS * 3)
             else:  # If chat_response is None and live_chat_id is not set (initial state or error)
                 time.sleep(POLL_INTERVAL_SECONDS)
@@ -263,5 +330,5 @@ def main():
         print("👋 Shutting down bot.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
