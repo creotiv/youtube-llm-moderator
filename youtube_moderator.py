@@ -1,8 +1,10 @@
 import os
+import sys
 import time
 import pickle
 import json
 import requests  # For requests to the LM Studio API
+import csv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -50,9 +52,8 @@ TOKEN_PICKLE_FILE = "token.pickle"  # File for saving authorization tokens
 
 MODERATION_INTERVAL_SECONDS = 10
 
-AD_MESSAGE_INTERVAL_SECONDS = 10  # Post promo message once every 3 minutes
-AD_MESSAGE_TEXT = """Друзья! Поддержите канал: подписка, лайк и колокольчик помогут распространению правды.
-А ваше спонсорство поможет увеличеть мою мотивацию делать больше стримов 🚀
+AD_MESSAGE_INTERVAL_SECONDS = 60  # Post promo message once every 3 minutes
+AD_MESSAGE_TEXT = """Друзья! Поддержите канал: подписка(c колокольчиком), лайк и донат помогут распространению правды. 
 Что бы получить доступ к чату, напишите "Путин Хуйло" """
 # AD_MESSAGE_TEXT = """Please support animals of Ukraine https://patreon.com/uah"""
 FEATURE_AD_ACTIVE = True
@@ -70,12 +71,12 @@ FEATURE_STATS_ACTIVE = True  # Enable/disable stats fetching functionality
 # Stream statistics configuration
 COMMENT_LOGIN_PHRASE = "Путин Хуйло"
 AUTHORIZED_USERS_FILE = "authorized_users.txt"
+CHAT_LOG_FILE = "chat_messages.log"
 
 # Variable to store IDs of already processed messages to avoid re-checking them
 processed_message_ids = set()
 last_poll_time = None
 authorized_users = set()
-
 
 ## COMMENT LOGIN FEATURE ########################################################
 
@@ -89,13 +90,18 @@ def load_authorized_users():
                 user = line.strip()
                 if user:
                     authorized_users.add(user)
+        print(authorized_users)
         print(f"✅ Loaded {len(authorized_users)} authorized users.")
     else:
         print("ℹ️ No authorization file found. Starting empty.")
 
 
+load_authorized_users()
+
+
 def save_authorized_user(user_id):
     """Add user to authorized list and persist to file."""
+    global authorized_users
     authorized_users.add(user_id)
     with open(AUTHORIZED_USERS_FILE, "a", encoding="utf-8") as f:
         f.write(user_id + "\n")
@@ -106,19 +112,36 @@ def moderate_message_with_login(user_id, msg, item):
     if item["authorDetails"].get("isChatOwner") or item["authorDetails"].get(
         "isChatModerator"
     ):
+        print("Admin")
         return
 
+    print(user_id, COMMENT_LOGIN_PHRASE.lower(), "|||", msg.lower(), authorized_users)
+
     if user_id not in authorized_users:
+        print("1")
         if COMMENT_LOGIN_PHRASE.lower() in msg.lower():
+            print("2")
             save_authorized_user(user_id)
+            print(authorized_users)
             return ""
         else:
+            print("DELETE")
             return "DELETE"
     else:
         return ""
 
 
 ## MAIN LOGIC ###################################################################
+
+
+def log_chat_message(user_id, user_name, message_text, is_removed):
+    """Append chat message moderation result to log file."""
+    try:
+        with open(CHAT_LOG_FILE, "a", encoding="utf-8", newline="") as log_file:
+            writer = csv.writer(log_file)
+            writer.writerow([user_id, user_name, message_text, bool(is_removed)])
+    except Exception as e:
+        print(f"⚠️ Failed to log chat message: {e}")
 
 
 def authenticate_youtube():
@@ -146,30 +169,41 @@ def get_active_stream_ids(youtube):
     """Finds the user's active stream and returns its chat ID, broadcast ID, and video ID."""
     try:
         print("🔍 Searching for user broadcasts...")
-        request = youtube.liveBroadcasts().list(
-            part="snippet,contentDetails,status",
-            mine=True,  # Request all user broadcasts
-        )
-        response = request.execute()
-
-        if not response.get("items"):
-            print("😕 No user broadcasts found.")
-            return None
-
+        page_token = None
         active_broadcast = None
-        for broadcast_item in response.get("items", []):
-            # Check broadcast status to find the active one
-            # 'live' status means the broadcast is currently live
-            # Can also check broadcast_item['status']['recordingStatus'] == 'recording'
-            if broadcast_item.get("status", {}).get("lifeCycleStatus") == "live":
-                active_broadcast = broadcast_item
-                break  # Found an active broadcast
+
+        while True:
+            request = youtube.liveBroadcasts().list(
+                part="snippet,contentDetails,status",
+                mine=True,  # Request all user broadcasts
+                maxResults=50,
+                pageToken=page_token,
+            )
+            response = request.execute()
+
+            if not response.get("items"):
+                if response.get("nextPageToken"):
+                    page_token = response["nextPageToken"]
+                    continue
+                print("😕 No user broadcasts found.")
+                return None
+
+            for broadcast_item in response.get("items", []):
+                # Check broadcast status to find the active one
+                # 'live' status means the broadcast is currently live
+                # Can also check broadcast_item['status']['recordingStatus'] == 'recording'
+                if broadcast_item.get("status", {}).get("lifeCycleStatus") == "live":
+                    active_broadcast = broadcast_item
+                    break  # Found an active broadcast
+
+            if active_broadcast or not response.get("nextPageToken"):
+                break
+
+            page_token = response.get("nextPageToken")
 
         if not active_broadcast:
             print("😕 No active streams found among user broadcasts.")
             return None
-
-        print(active_broadcast)
 
         live_chat_id = active_broadcast["snippet"]["liveChatId"]
         broadcast_id = active_broadcast["id"]
@@ -260,10 +294,12 @@ def delete_chat_message(youtube, message_id):
     try:
         youtube.liveChatMessages().delete(id=message_id).execute()
         print(f"🗑️ Message {message_id} successfully deleted.")
+        return True
     except HttpError as e:
         print(f"YouTube API error when deleting message {message_id}: {e}")
     except Exception as e:
         print(f"Unknown error when deleting message {message_id}: {e}")
+    return False
 
 
 def post_message(youtube, live_chat_id, message_text=AD_MESSAGE_TEXT):
@@ -639,15 +675,22 @@ def main():
                                     message_text
                                 )
                             elif FEATURE_MODERATOR_ACTIVE == "LOGIN":
+                                print("Login")
                                 moderation_decision = moderate_message_with_login(
                                     author_channel_id, message_text, item
                                 )
 
+                            is_removed = False
                             if moderation_decision == "DELETE":
                                 print(f"🚫 Inappropriate message detected. Deleting...")
-                                delete_chat_message(youtube, message_id)
+                                is_removed = delete_chat_message(youtube, message_id)
                             else:
                                 print("✅ Message is acceptable.")
+                                is_removed = False
+
+                            log_chat_message(
+                                author_channel_id, author_name, message_text, is_removed
+                            )
 
                     if new_messages_count == 0:
                         print(f".", end="", flush=True)
