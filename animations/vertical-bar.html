@@ -213,7 +213,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    updateBar(data.online_viewers / 3);
+                    updateBar(data.online_viewers / 10);
                 } else {
                     console.error('Failed to fetch stats:', data.error);
                     // Fallback to default value

@@ -50,12 +50,13 @@ TOKEN_PICKLE_FILE = "token.pickle"  # File for saving authorization tokens
 
 MODERATION_INTERVAL_SECONDS = 10
 
-AD_MESSAGE_INTERVAL_SECONDS = 250  # Post promo message once every 3 minutes
-# AD_MESSAGE_TEXT = """Друзья! Поддержите канал: подписка, лайк и колокольчик помогут распространению правды.
-# А ваше спонсорство поможет увеличеть мою мотивацию делать больше стримов 🚀"""
-AD_MESSAGE_TEXT = """Please support animals of Ukraine https://patreon.com/uah"""
-FEATURE_AD_ACTIVE = False
-FEATURE_MODERATOR_ACTIVE = False
+AD_MESSAGE_INTERVAL_SECONDS = 10  # Post promo message once every 3 minutes
+AD_MESSAGE_TEXT = """Друзья! Поддержите канал: подписка, лайк и колокольчик помогут распространению правды.
+А ваше спонсорство поможет увеличеть мою мотивацию делать больше стримов 🚀
+Что бы получить доступ к чату, напишите "Путин Хуйло" """
+# AD_MESSAGE_TEXT = """Please support animals of Ukraine https://patreon.com/uah"""
+FEATURE_AD_ACTIVE = True
+FEATURE_MODERATOR_ACTIVE = "LOGIN"
 
 # Ad break configuration
 AD_BREAK_INTERVAL_SECONDS = 90  # Trigger ad break every 5 minutes (300 seconds)
@@ -66,9 +67,58 @@ AD_BREAK_DURATION_SECONDS = 30  # Duration for ad placement in stream settings
 STATS_UPDATE_INTERVAL_SECONDS = 30  # Update stats every 30 seconds
 FEATURE_STATS_ACTIVE = True  # Enable/disable stats fetching functionality
 
+# Stream statistics configuration
+COMMENT_LOGIN_PHRASE = "Путин Хуйло"
+AUTHORIZED_USERS_FILE = "authorized_users.txt"
+
 # Variable to store IDs of already processed messages to avoid re-checking them
 processed_message_ids = set()
 last_poll_time = None
+authorized_users = set()
+
+
+## COMMENT LOGIN FEATURE ########################################################
+
+
+def load_authorized_users():
+    """Load authorized users from file."""
+    global authorized_users
+    if os.path.exists(AUTHORIZED_USERS_FILE):
+        with open(AUTHORIZED_USERS_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                user = line.strip()
+                if user:
+                    authorized_users.add(user)
+        print(f"✅ Loaded {len(authorized_users)} authorized users.")
+    else:
+        print("ℹ️ No authorization file found. Starting empty.")
+
+
+def save_authorized_user(user_id):
+    """Add user to authorized list and persist to file."""
+    authorized_users.add(user_id)
+    with open(AUTHORIZED_USERS_FILE, "a", encoding="utf-8") as f:
+        f.write(user_id + "\n")
+    print(f"✅ Added '{user_id}' to authorized users and saved.")
+
+
+def moderate_message_with_login(user_id, msg, item):
+    if item["authorDetails"].get("isChatOwner") or item["authorDetails"].get(
+        "isChatModerator"
+    ):
+        return
+
+    if user_id not in authorized_users:
+        if COMMENT_LOGIN_PHRASE.lower() in msg.lower():
+            save_authorized_user(user_id)
+            return ""
+        else:
+            return "DELETE"
+    else:
+        return ""
+
+
+## MAIN LOGIC ###################################################################
 
 
 def authenticate_youtube():
@@ -216,7 +266,7 @@ def delete_chat_message(youtube, message_id):
         print(f"Unknown error when deleting message {message_id}: {e}")
 
 
-def post_advertising_message(youtube, live_chat_id, message_text=AD_MESSAGE_TEXT):
+def post_message(youtube, live_chat_id, message_text=AD_MESSAGE_TEXT):
     """Posts an advertising/promo message to the live chat."""
     try:
         body = {
@@ -491,12 +541,14 @@ def main():
                     # Reset processed messages and page token for a new stream/chat
                     processed_message_ids = set()
                     next_page_token = None
+                    last_moderation_time = time.time()
                     last_ad_post_time = time.time()  # start interval for promo posting
                     last_ad_break_time = 0  # start interval for ad breaks
                     last_stream_ad_settings_time = 0
                     last_stats_update_time = 0  # start interval for stats updates
                     total_errors = 0
                     enable_auto_ad_placement(youtube, broadcast_id)
+                    post_message(youtube, live_chat_id)
 
             now = time.time()
 
@@ -508,8 +560,9 @@ def main():
                     and last_ad_post_time is not None
                     and (now - last_ad_post_time) >= AD_MESSAGE_INTERVAL_SECONDS
                 ):
-                    result = post_advertising_message(youtube, live_chat_id)
+                    result = post_message(youtube, live_chat_id)
                     if result:
+                        print("AD POSTED")
                         last_ad_post_time = now
                         total_errors = 0
                     else:
@@ -546,7 +599,7 @@ def main():
                         total_errors += 1
                         print("🚨 Failed to get stream statistics.")
 
-            if FEATURE_MODERATOR_ACTIVE:
+            if FEATURE_MODERATOR_ACTIVE != "":
                 chat_response = None
                 if (
                     live_chat_id
@@ -572,6 +625,7 @@ def main():
                             message_text = ""
                             try:
                                 author_name = item["authorDetails"]["displayName"]
+                                author_channel_id = item["authorDetails"]["channelId"]
                                 message_text = item["snippet"]["displayMessage"]
                             except:
                                 print("Error getting message: ", item)
@@ -580,9 +634,14 @@ def main():
                                 f"\n💬 New message from {author_name}: {message_text}"
                             )
 
-                            moderation_decision = moderate_message_with_llm(
-                                message_text
-                            )
+                            if FEATURE_MODERATOR_ACTIVE == "LLM":
+                                moderation_decision = moderate_message_with_llm(
+                                    message_text
+                                )
+                            elif FEATURE_MODERATOR_ACTIVE == "LOGIN":
+                                moderation_decision = moderate_message_with_login(
+                                    author_channel_id, message_text, item
+                                )
 
                             if moderation_decision == "DELETE":
                                 print(f"🚫 Inappropriate message detected. Deleting...")

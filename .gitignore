@@ -4,3 +4,4 @@ token.pickle
 client_secret.json
 .DS_Store
 *.log
+authorized_users.txt
