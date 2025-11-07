@@ -1,6 +1,7 @@
 import os
 import time
 import pickle
+import json
 import requests  # For requests to the LM Studio API
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -53,12 +54,17 @@ AD_MESSAGE_INTERVAL_SECONDS = 250  # Post promo message once every 3 minutes
 # AD_MESSAGE_TEXT = """Друзья! Поддержите канал: подписка, лайк и колокольчик помогут распространению правды.
 # А ваше спонсорство поможет увеличеть мою мотивацию делать больше стримов 🚀"""
 AD_MESSAGE_TEXT = """Please support animals of Ukraine https://patreon.com/uah"""
-FEATURE_AD_ACTIVE = True
+FEATURE_AD_ACTIVE = False
 FEATURE_MODERATOR_ACTIVE = False
 
 # Ad break configuration
 AD_BREAK_INTERVAL_SECONDS = 90  # Trigger ad break every 5 minutes (300 seconds)
 FEATURE_AD_BREAK_ACTIVE = True  # Enable/disable ad break functionality
+AD_BREAK_DURATION_SECONDS = 30  # Duration for ad placement in stream settings
+
+# Stream statistics configuration
+STATS_UPDATE_INTERVAL_SECONDS = 30  # Update stats every 30 seconds
+FEATURE_STATS_ACTIVE = True  # Enable/disable stats fetching functionality
 
 # Variable to store IDs of already processed messages to avoid re-checking them
 processed_message_ids = set()
@@ -67,7 +73,7 @@ last_poll_time = None
 
 def authenticate_youtube():
     """Authenticate via OAuth 2.0 and get the YouTube API service."""
-    creds = None`   `
+    creds = None
     if os.path.exists(TOKEN_PICKLE_FILE):
         with open(TOKEN_PICKLE_FILE, "rb") as token:
             creds = pickle.load(token)
@@ -86,8 +92,8 @@ def authenticate_youtube():
     return build("youtube", "v3", credentials=creds)
 
 
-def get_active_live_chat_id(youtube):
-    """Finds the user's active stream and returns its chat ID."""
+def get_active_stream_ids(youtube):
+    """Finds the user's active stream and returns its chat ID, broadcast ID, and video ID."""
     try:
         print("🔍 Searching for user broadcasts...")
         request = youtube.liveBroadcasts().list(
@@ -113,13 +119,16 @@ def get_active_live_chat_id(youtube):
             print("😕 No active streams found among user broadcasts.")
             return None
 
+        print(active_broadcast)
+
         live_chat_id = active_broadcast["snippet"]["liveChatId"]
         broadcast_id = active_broadcast["id"]
+        video_id = active_broadcast["id"]  # videoId is the same as the broadcast id
         stream_title = active_broadcast["snippet"]["title"]
         print(
-            f"🟢 Active stream found: '{stream_title}' (Live Chat ID: {live_chat_id}, Broadcast ID: {broadcast_id})"
+            f"🟢 Active stream found: '{stream_title}' (Live Chat ID: {live_chat_id}, Broadcast ID: {broadcast_id}, Video ID: {video_id})"
         )
-        return live_chat_id, broadcast_id
+        return live_chat_id, broadcast_id, video_id
     except HttpError as e:
         print(f"YouTube API error while searching for active stream: {e}")
         # Add error details if available
@@ -228,7 +237,7 @@ def post_advertising_message(youtube, live_chat_id, message_text=AD_MESSAGE_TEXT
         return False
 
 
-def trigger_ad_break(youtube, broadcast_id, duration_secs=30):
+def trigger_ad_break(youtube, broadcast_id):
     """
     Insert an ad cuepoint into an active live broadcast.
 
@@ -236,9 +245,8 @@ def trigger_ad_break(youtube, broadcast_id, duration_secs=30):
         youtube: an authorized youtube API client (scopes must include
                  https://www.googleapis.com/auth/youtube or youtube.force-ssl)
         broadcast_id: the liveBroadcast id currently streaming
-        duration_secs: ad break duration in seconds (default 30)
     """
-    body = {"cueType": "cueTypeAd", "durationSecs": int(duration_secs)}
+    body = {"cueType": "cueTypeAd", "durationSecs": int(AD_BREAK_DURATION_SECONDS)}
 
     try:
         print(body)
@@ -257,6 +265,186 @@ def trigger_ad_break(youtube, broadcast_id, duration_secs=30):
         return False
     except Exception as e:
         print(f"Unknown error when triggering ad break: {e}")
+        return False
+
+
+def enable_auto_ad_placement(youtube, broadcast_id):
+    """
+    Modify stream settings to automatically place ads during the broadcast.
+
+    Args:
+        youtube: an authorized youtube API client
+        broadcast_id: the liveBroadcast id currently streaming
+        ad_duration_secs: duration for ad placement in seconds (default 30)
+    """
+    try:
+        # Get current broadcast details
+        broadcast_request = youtube.liveBroadcasts().get(
+            id=broadcast_id, part="snippet,contentDetails,status"
+        )
+        current_broadcast = broadcast_request.execute()
+
+        # Prepare updated settings for automatic ad placement
+        updated_settings = {
+            "snippet": current_broadcast["snippet"],
+            "contentDetails": current_broadcast["contentDetails"],
+            "status": current_broadcast["status"],
+        }
+
+        # Enable automatic ad placement
+        if "contentDetails" not in updated_settings:
+            updated_settings["contentDetails"] = {}
+
+        # Set ad placement settings
+        updated_settings["contentDetails"]["enableAutoAdPlacement"] = True
+        updated_settings["contentDetails"][
+            "adBreakDuration"
+        ] = AD_BREAK_DURATION_SECONDS
+
+        # Update the broadcast with new settings
+        update_request = youtube.liveBroadcasts().update(
+            part="snippet,contentDetails,status", body=updated_settings
+        )
+        result = update_request.execute()
+
+        print(
+            f"📺 Stream settings updated for automatic ad placement (duration: {AD_BREAK_DURATION_SECONDS}s)"
+        )
+        print(
+            f"🔄 Auto ad placement enabled: {result.get('contentDetails', {}).get('enableAutoAdPlacement', False)}"
+        )
+        return True
+
+    except HttpError as e:
+        print(f"YouTube API error when modifying stream settings: {e}")
+        return False
+    except Exception as e:
+        print(f"Unknown error when modifying stream settings: {e}")
+        return False
+
+
+def get_stream_statistics(youtube, video_id):
+    """
+    Get live stream statistics including concurrent viewers and total views using YouTube Data API v3.
+    This provides real concurrent viewer counts from YouTube's live streaming data.
+
+    Args:
+        youtube: an authorized youtube API client
+        video_id: the YouTube video ID of the live stream
+
+    Returns:
+        dict: Dictionary containing online_viewers and total_views
+    """
+    try:
+        # Request video details with live streaming info and statistics
+        request = youtube.videos().list(
+            part="liveStreamingDetails,statistics,snippet", id=video_id
+        )
+        response = request.execute()
+
+        if not response["items"]:
+            print(f"❌ No video found with ID: {video_id}")
+            return None
+
+        video = response["items"][0]
+
+        # Check if it's a live stream
+        if "liveStreamingDetails" not in video:
+            print("⚠️ This video is not a live stream")
+            return None
+
+        live_details = video["liveStreamingDetails"]
+        statistics = video["statistics"]
+        snippet = video["snippet"]
+
+        # Extract concurrent viewers from live streaming details
+        concurrent_viewers = live_details.get("concurrentViewers")
+        if concurrent_viewers is not None:
+            concurrent_viewers = int(concurrent_viewers)
+        else:
+            print("⚠️ No concurrent viewers data available (stream may not be live)")
+            concurrent_viewers = 0
+
+        stats = {
+            "video_id": video_id,
+            "title": snippet.get("title", "N/A"),
+            "channel_title": snippet.get("channelTitle", "N/A"),
+            "concurrent_viewers": live_details.get("concurrentViewers"),
+            "actual_start_time": live_details.get("actualStartTime"),
+            "scheduled_start_time": live_details.get("scheduledStartTime"),
+            "is_live": "actualEndTime" not in live_details,
+            "total_views": statistics.get("viewCount"),
+            "likes": statistics.get("likeCount"),
+            "comments": statistics.get("commentCount"),
+        }
+
+        print(
+            f"📊 Stream stats - Concurrent viewers: {stats['concurrent_viewers']}, Total views: {stats['total_views']}"
+        )
+        return stats
+
+    except HttpError as e:
+        print(f"❌ YouTube API error when getting stream statistics: {e}")
+        return None
+    except Exception as e:
+        print(f"❌ Unknown error when getting stream statistics: {e}")
+        return None
+
+
+def update_stats_via_api(stats):
+    """
+    Update stats via the animation server API.
+
+    Args:
+        stats: Dictionary containing the statistics to save
+    """
+    try:
+        # Convert the detailed stats to the format expected by the API
+        api_stats = {
+            "online_viewers": (
+                int(stats.get("concurrent_viewers", 0))
+                if stats.get("concurrent_viewers")
+                else 0
+            ),
+            "total_views": (
+                int(stats.get("total_views", 0)) if stats.get("total_views") else 0
+            ),
+            "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            # Additional fields for the server
+            "video_id": stats.get("video_id", ""),
+            "title": stats.get("title", "N/A"),
+            "channel_title": stats.get("channel_title", "N/A"),
+            "actual_start_time": stats.get("actual_start_time", ""),
+            "scheduled_start_time": stats.get("scheduled_start_time", ""),
+            "is_live": stats.get("is_live", False),
+            "likes": int(stats.get("likes", 0)) if stats.get("likes") else 0,
+            "comments": int(stats.get("comments", 0)) if stats.get("comments") else 0,
+        }
+
+        # Make API call to update stats
+        response = requests.post(
+            "http://localhost:5555/api/update-stats", json=api_stats, timeout=5
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                print(
+                    f"📝 Updated stats via API - Concurrent viewers: {api_stats['online_viewers']}, Total views: {api_stats['total_views']}"
+                )
+                return True
+            else:
+                print(f"❌ API returned error: {data.get('error')}")
+                return False
+        else:
+            print(f"❌ API request failed with status: {response.status_code}")
+            return False
+
+    except requests.exceptions.ConnectionError:
+        print("⚠️ Cannot connect to animation server. Stats not updated.")
+        return False
+    except Exception as e:
+        print(f"❌ Error updating stats via API: {e}")
         return False
 
 
@@ -279,16 +467,19 @@ def main():
 
     live_chat_id = None
     broadcast_id = None
+    video_id = None
     next_page_token = None
     last_ad_post_time = None
     last_moderation_time = None
     last_ad_break_time = None
+    last_stream_ad_settings_time = None
+    last_stats_update_time = None
     total_errors = 0
 
     try:
         while True:
             if not live_chat_id:
-                result = get_active_live_chat_id(youtube)
+                result = get_active_stream_ids(youtube)
                 if not result:
                     print(
                         f"No active streams found. Retrying in {POLL_INTERVAL_SECONDS * 5} seconds..."
@@ -296,15 +487,20 @@ def main():
                     time.sleep(POLL_INTERVAL_SECONDS * 5)
                     continue
                 else:
-                    live_chat_id, broadcast_id = result
+                    live_chat_id, broadcast_id, video_id = result
                     # Reset processed messages and page token for a new stream/chat
                     processed_message_ids = set()
                     next_page_token = None
                     last_ad_post_time = time.time()  # start interval for promo posting
                     last_ad_break_time = 0  # start interval for ad breaks
-                    print(f"🎧 Starting to monitor chat ID: {live_chat_id}")
+                    last_stream_ad_settings_time = 0
+                    last_stats_update_time = 0  # start interval for stats updates
+                    total_errors = 0
+                    enable_auto_ad_placement(youtube, broadcast_id)
 
             now = time.time()
+
+            # enable_auto_ad_placement(youtube, broadcast_id)
 
             if FEATURE_AD_ACTIVE:
                 if (
@@ -333,6 +529,22 @@ def main():
                     else:
                         total_errors += 1
                         print("🚨 Failed to trigger ad break.")
+
+            if FEATURE_STATS_ACTIVE:
+                if (
+                    video_id
+                    and last_stats_update_time is not None
+                    and (now - last_stats_update_time) >= STATS_UPDATE_INTERVAL_SECONDS
+                ):
+                    stats = get_stream_statistics(youtube, video_id)
+                    if stats:
+                        if update_stats_via_api(stats):
+                            last_stats_update_time = now
+                        else:
+                            print("🚨 Failed to update stats via API.")
+                    else:
+                        total_errors += 1
+                        print("🚨 Failed to get stream statistics.")
 
             if FEATURE_MODERATOR_ACTIVE:
                 chat_response = None
@@ -390,11 +602,13 @@ def main():
                 )
                 live_chat_id = None  # Reset ID so the script tries to find a new stream
                 broadcast_id = None
+                video_id = None
                 next_page_token = None
                 processed_message_ids = set()
                 last_ad_post_time = None
                 last_moderation_time = None
                 last_ad_break_time = None
+                last_stats_update_time = None
                 time.sleep(POLL_INTERVAL_SECONDS * 3)
             else:
                 time.sleep(POLL_INTERVAL_SECONDS)

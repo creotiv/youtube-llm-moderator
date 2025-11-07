@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animated Vertical Bar Indicator</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: rgba(0, 0, 0, 0);
+        }
+
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .bar-container {
+            position: relative;
+            width: 60px;
+            height: 300px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 30px;
+            margin: 20px auto;
+            overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .bar-fill {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            border-radius: 0 0 28px 28px;
+            transition: all 0.3s ease;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .bar-glow {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 10px;
+            filter: blur(5px);
+            opacity: 0.6;
+            animation: glow 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                height: var(--base-height);
+                transform: scaleY(1);
+            }
+
+            50% {
+                height: calc(var(--base-height) + 5px);
+                transform: scaleY(1.02);
+            }
+        }
+
+        @keyframes glow {
+
+            0%,
+            100% {
+                opacity: 0.4;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.8;
+                transform: scale(1.05);
+            }
+        }
+
+        .controls {
+            margin-top: 30px;
+        }
+
+        input[type="range"] {
+            width: 250px;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .value-display {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 15px 0;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
+        .scale {
+            position: absolute;
+            right: -40px;
+            top: 0;
+            height: 100%;
+            width: 30px;
+        }
+
+        .scale-mark {
+            position: absolute;
+            right: 0;
+            width: 15px;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .scale-label {
+            position: absolute;
+            right: 20px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            transform: translateY(-50%);
+        }
+
+        h1 {
+            margin-bottom: 30px;
+            font-size: 28px;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bar-container">
+        <div class="bar-glow" id="barGlow"></div>
+        <div class="bar-fill" id="barFill"></div>
+
+        <div class="scale">
+            <div class="scale-mark" style="top: 0%;"></div>
+            <div class="scale-label" style="top: 0%;">100</div>
+
+            <div class="scale-mark" style="top: 25%;"></div>
+            <div class="scale-label" style="top: 25%;">75</div>
+
+            <div class="scale-mark" style="top: 50%;"></div>
+            <div class="scale-label" style="top: 50%;">50</div>
+
+            <div class="scale-mark" style="top: 75%;"></div>
+            <div class="scale-label" style="top: 75%;">25</div>
+
+            <div class="scale-mark" style="top: 100%;"></div>
+            <div class="scale-label" style="top: 100%;">0</div>
+        </div>
+    </div>
+
+    <script>
+        const barFill = document.getElementById('barFill');
+        const barGlow = document.getElementById('barGlow');
+
+        function updateBar(value) {
+            const percentage = value / 100;
+            const height = percentage * 300; // 300px is the container height
+
+            // Calculate color transition from green to red
+            const red = Math.round(255 * percentage);
+            const green = Math.round(255 * (1 - percentage));
+            const color = `rgb(${red}, ${green}, 20)`;
+
+            // Set CSS custom property for animation
+            document.documentElement.style.setProperty('--base-height', `${height}px`);
+
+            // Apply colors
+            barFill.style.background = `linear-gradient(to top, ${color}, rgba(255, 255, 255, 0.2))`;
+            barGlow.style.background = `linear-gradient(to top, ${color}, transparent)`;
+        }
+
+        // Fetch data from API and update bar
+        async function fetchAndUpdateBar() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+
+                if (data.success) {
+                    updateBar(data.online_viewers / 3);
+                } else {
+                    console.error('Failed to fetch stats:', data.error);
+                    // Fallback to default value
+                    updateBar(10);
+                }
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+                // Fallback to default value
+                updateBar(10);
+            }
+        }
+
+        // Initialize with API data
+        fetchAndUpdateBar();
+
+        // Auto-refresh every 5 seconds
+        setInterval(fetchAndUpdateBar, 1000);
+
+    </script>
+</body>
+
+</html>

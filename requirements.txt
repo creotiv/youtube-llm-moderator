@@ -20,3 +20,5 @@ requests-oauthlib==2.0.0
 rsa==4.9.1
 uritemplate==4.2.0
 urllib3==2.4.0
+Flask==3.0.0
+Flask-CORS==4.0.0
